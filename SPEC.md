@@ -99,7 +99,8 @@ TELEGRAM_MENTION_USER_ID = 12345678            # @-mentioned on MENTION_PING
 NOTIFICATION_BATCH_WINDOW_SECS = 30            # see §12
 
 # --- Browser ---
-ADBLOCK_XPI_PATH: str | None = "./vendor/ublock_origin.xpi"   # None disables
+ADBLOCK_XPI_PATH: str | None = "./vendor/ublock_origin.xpi"   # None disables; auto-downloaded if missing
+ADBLOCK_XPI_URL = "https://addons.mozilla.org/firefox/downloads/latest/ublock-origin/latest.xpi"
 FIREFOX_BINARY_PATH: str | None = None          # None = system default
 ```
 
@@ -190,7 +191,7 @@ Each entry task is wrapped in a supervisor that catches unexpected exceptions, l
 ## 8. Page Fetching
 
 - Firefox, headless, strict tracking protection on.
-- If `ADBLOCK_XPI_PATH` is set, `driver.install_addon(path, temporary=True)` at startup. Primary motivation: drop ad traffic, prevent spinning-forever loads, and reduce noise diffs.
+- If `ADBLOCK_XPI_PATH` is set: when the file exists, use it; when it's missing, auto-download from `ADBLOCK_XPI_URL` to that path and proceed. Then `driver.install_addon(path, temporary=True)` at startup. If `install_addon` raises, delete the containing directory's contents (the cached `.xpi`), re-download once, and retry; a second failure aborts startup. Primary motivation: drop ad traffic, prevent spinning-forever loads, and reduce noise diffs.
 - `driver.set_page_load_timeout(entry.timeout_secs)`. On `TimeoutException` we do **not** raise; we proceed to xpath extraction against whatever DOM is present.
 - Extraction: `driver.find_element(By.XPATH, entry.xpath).get_attribute("innerText")`. `innerText` respects visibility and CSS, so hidden boilerplate is excluded; no further normalization happens in-process — all noise judgement is deferred to the LLM.
 - No JS wait strategy beyond the page-load timeout. If a target needs something smarter, it can be added per-entry later (not in scope for v1).
@@ -330,16 +331,3 @@ uv run python -m coopcrawl --once
 ```
 
 CLI flags: `--config PATH`, `--once`, `-v/--verbose` (sets DEBUG level).
-
-## 17. Flagged Decisions — Please Confirm or Overrule
-
-Defaults I picked that weren't explicit in our exchange:
-
-1. **`COOPCRAWL_TELEGRAM_BOT_TOKEN` env var.** You said "no other secrets" but the Telegram bot API needs a token — it has to live somewhere, and per your rule env-vars-only. OK?
-2. **HTTP status via `requests.head()` before Selenium.** Adds one HEAD per poll. Alternative is Chrome+CDP, which locks us to Chrome. OK with the HEAD approach?
-3. **`NOTIFICATION_BATCH_WINDOW_SECS = 30`.** Reasonable, or do you want shorter/longer?
-4. **Shared Firefox + `asyncio.Lock`.** Serializes all fetches on one browser; trivial and cheap at tens of URLs. If you want parallelism later we'd switch to a small pool.
-5. **`innerText`** as the extraction, not `textContent` or `innerHTML`. OK?
-6. **uBlock Origin `.xpi` is user-supplied** at `./vendor/ublock_origin.xpi`, off if absent. No auto-download (avoids a supply-chain surface). OK?
-7. **LLM parse/schema failure = silent `NO_PING`**, log only, no Telegram. OK?
-8. **First-diff-ignored state is per-task, in-memory.** A restart silently re-baselines every entry — any change that happened during downtime is lost. You confirmed this explicitly; noting here for completeness.
