@@ -91,6 +91,7 @@ ALL_ENTRIES: list[Entry] = [
 LLM_BASE_URL = "http://localhost:8000/v1"
 LLM_MODEL = "Qwen/Qwen2.5-72B-Instruct"
 LLM_TEMPERATURE = 0.0
+LLM_DIFF_MAX_BYTES = 8 * 1024                  # see §10; above this, skip LLM and auto-NORMAL_PING
 
 # --- Notification ---
 TELEGRAM_GROUP_CHAT_ID = -1001234567890        # group to post into
@@ -217,11 +218,13 @@ difflib.unified_diff(
 )
 ```
 
-Joined into a single string, then truncated to a hard ceiling (16 KB). Truncation keeps a head slice + tail slice with a `...[N lines omitted]...` marker in the middle, so the LLM sees both ends of a large change.
+Joined into a single string. If the joined size exceeds `LLM_DIFF_MAX_BYTES` (default 8 KB) the LLM is skipped entirely and the change is auto-classified as `NORMAL_PING` with reason `"Diff exceeds <N> bytes — auto-classified without LLM evaluation."`. Rationale: a diff that large is by construction interesting enough to surface, and round-tripping it through the LLM only burns tokens to confirm the obvious. Below the threshold the full diff is passed to the LLM verbatim — no truncation, no head/tail slicing.
+
+`LLM_DIFF_MAX_BYTES` lives in `config.py` alongside the other LLM transport constants so it can be raised on entries that genuinely warrant LLM judgement on large diffs.
 
 ## 11. LLM Evaluation
 
-Single stateless call per change:
+Single stateless call per change (only reached when the diff is under `LLM_DIFF_MAX_BYTES`; see §10):
 
 ```python
 await client.chat.completions.create(
